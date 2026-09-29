@@ -73,6 +73,8 @@ final class NotchMusicService: ObservableObject {
         let availability: NotchMusicAutomation.Availability
     }
     private var automationAction: AutomationAction?
+    private var spotify: NotchSpotifyPlayback?
+    private var nativeReading: Reading?
     private var awaitingAutomationValidation = false
     private let queue = DispatchQueue(label: "com.vorssaint.notch-music", qos: .utility)
     private lazy var commandWriter = NotchMusicCommandWriter { [queue = self.queue] action in queue.async(execute: action) }
@@ -238,6 +240,12 @@ final class NotchMusicService: ObservableObject {
     }
 
     private func apply(_ reading: Reading) {
+        let reading = spotifyReading(reading)
+        publishReading(reading)
+        syncSpotify()
+    }
+
+    private func publishReading(_ reading: Reading) {
         let first = awaitingPlayback
         if trackChange.isNewSong(reading.playback, first: first) { trackChanges.send() }
         updateArtwork(reading.artwork, tint: reading.tint, playback: reading.playback)
@@ -249,6 +257,47 @@ final class NotchMusicService: ObservableObject {
         updateAutomation(for: reading.playback)
         NotchLyricsService.shared.playbackChanged(reading.playback)
         updateQueue()
+    }
+
+    private func spotifyReading(_ reading: Reading) -> Reading {
+        nativeReading = reading
+        if reading.playback?.track.appPID != spotify?.target.pid {
+            spotify?.stop(); spotify = nil
+        }
+        guard let fresh = spotify?.playback else { return reading }
+        return readingWithSpotify(fresh, native: reading)
+    }
+
+    private func readingWithSpotify(_ fresh: NotchPlayback, native: Reading) -> Reading {
+        let image = fresh.track.artworkData.flatMap { ImageThumbnailer.thumbnail(data: $0, pointSize: 160, scale: 2) }
+        let sources = native.sources.map { source in
+            guard source.pid == fresh.track.appPID else { return source }
+            return NotchPlaybackSource(pid: source.pid, bundleIdentifier: source.bundleIdentifier,
+                isMusicApp: source.isMusicApp, isPlaying: fresh.isPlaying, hasTrack: true, displayName: source.displayName)
+        }
+        return Reading(playback: fresh, artwork: image, tint: image.flatMap(Self.artworkTint(of:)),
+                       sources: sources, automatic: native.automatic, selectedPID: native.selectedPID)
+    }
+
+    private func syncSpotify() {
+        guard let available = automationAvailability, available.access == .granted,
+              available.target.bundleIdentifier == "com.spotify.client",
+              playback?.track.appPID == available.target.pid else {
+            spotify?.stop(); spotify = nil
+            return
+        }
+        guard spotify?.target != available.target else { return }
+        spotify?.stop()
+        let target = available.target
+        spotify = NotchSpotifyPlayback(target: target) { [weak self] fresh in
+            guard let self, self.spotify?.target == target, let native = self.nativeReading,
+                  native.playback?.track.appPID == target.pid else { return }
+            // Do not feed the authoritative reading back as native discovery.
+            let reading = fresh.map { self.readingWithSpotify($0, native: native) } ?? native
+            if fresh != nil { self.endPlaybackGap() }
+            self.publishReading(reading)
+            if fresh == nil { self.refreshAutomation() }
+        }
     }
 
     private func connectionEnded() {
@@ -321,6 +370,8 @@ final class NotchMusicService: ObservableObject {
     }
 
     private func disconnect() {
+        spotify?.stop(); spotify = nil
+        nativeReading = nil
         endPlaybackGap()
         artworkWork?.cancel()
         artworkWork = nil
@@ -370,6 +421,8 @@ final class NotchMusicService: ObservableObject {
             : !sourceIsAutomatic && selectedSourcePID == selection?.pid { return }
         guard selection == nil || sources.contains(where: { $0.selection == selection }),
               send(.source(selection)) else { return }
+        spotify?.stop(); spotify = nil
+        nativeReading = nil
         chosenSource = selection
         cancelAutomationAction()
         setQueueVisible(false)
@@ -506,12 +559,17 @@ final class NotchMusicService: ObservableObject {
 
     var canSeek: Bool {
         guard let playback, playback.hasPosition, playback.duration > 0 else { return false }
+        if playback.track.appBundleIdentifier == "com.spotify.client" {
+            guard let context = playback.commandContext, spotify?.playback?.commandContext == context else { return false }
+        }
         return playback.canSendCommandsDirectly ? playback.canSeek
             : automationAvailability?.access == .granted && automationAvailability?.capabilities.position != nil
     }
 
     func canPerform(_ command: Command) -> Bool {
         guard let playback, playback.commandContext != nil, !commandPending else { return false }
+        if playback.track.appBundleIdentifier == "com.spotify.client",
+           spotify?.playback?.commandContext != playback.commandContext { return false }
         if case .seek = command { return canSeek }
         if playback.canSendCommandsDirectly { return !lacksTrackSkipping(command) }
         guard let available = automationAvailability, available.access == .granted else { return false }
@@ -563,6 +621,7 @@ final class NotchMusicService: ObservableObject {
                 guard let self, self.generation == requested, self.automationTarget == target,
                       !cancellation.isCancelled else { return }
                 self.automationAvailability = available
+                self.syncSpotify()
             }
         }
     }
@@ -607,8 +666,18 @@ final class NotchMusicService: ObservableObject {
         }
         automationTimeout = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timeout)
-        guard send(.validate(action.id, context)) else {
+        guard validateAutomation(action.id, context: context) else {
             cancelAutomationAction(); commandFailed = true; return false
+        }
+        return true
+    }
+
+    private func validateAutomation(_ id: UUID, context: NotchPlaybackContext) -> Bool {
+        guard let spotify, spotify.playback?.commandContext == context else {
+            return send(.validate(id, context))
+        }
+        spotify.validate(context) { [weak self] valid in
+            self?.receiveValidation(["validationRequest": id.uuidString, "validationOK": valid])
         }
         return true
     }
@@ -630,6 +699,7 @@ final class NotchMusicService: ObservableObject {
                 guard let self, !cancellation.isCancelled, self.automationAction?.id == action.id else { return }
                 self.cancelAutomationAction()
                 self.commandFailed = !succeeded
+                self.spotify?.refresh()
                 if !succeeded { self.refreshAutomation() }
             }
         }

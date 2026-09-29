@@ -85,7 +85,9 @@ struct NotchPlayback: Equatable {
                                 .map { $0.doubleValue.isFinite && $0.doubleValue >= 0 } == true,
                              itemIdentifier: reply.info["itemIdentifier"] as? String,
                              commandContext: commandContext?.pid == track.appPID ? commandContext : nil,
-                             canSendCommandsDirectly: canSendCommandsDirectly,
+                             // Spotify's advertised native commands can fail
+                             // while another app owns the system session.
+                             canSendCommandsDirectly: canSendCommandsDirectly && track.appBundleIdentifier != "com.spotify.client",
                              canSkipNext: reply.info["canSkipNext"] as? Bool,
                              canSkipPrevious: reply.info["canSkipPrevious"] as? Bool)
     }
