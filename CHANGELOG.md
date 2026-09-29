@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Dynamic Island
+- The capsule grows around what it shows when the pointer reaches it, so a song's cover and sound bars no longer jump outward first.
+
+### Contributors
+Feedback: Barbel Design.
+
 ## [3.4.1-beta.1] - 2026-09-29
 
 ### Summary
