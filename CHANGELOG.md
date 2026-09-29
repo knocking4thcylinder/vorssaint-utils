@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Dynamic Island
+- The Combine menu names each pair in the order the island shows it, left to right, such as Music + Calendar.
+
+### Contributors
+Feedback: Pinea.
+
 ## [3.4.1-beta.1] - 2026-09-29
 
 ### Summary
