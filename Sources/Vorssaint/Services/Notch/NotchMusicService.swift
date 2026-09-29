@@ -264,7 +264,16 @@ final class NotchMusicService: ObservableObject {
         if reading.playback?.track.appPID != spotify?.target.pid {
             spotify?.stop(); spotify = nil
         }
-        guard let fresh = spotify?.playback else { return reading }
+        guard let fresh = spotify?.playback else {
+            // A rejected transition snapshot must not briefly replace verified
+            // Spotify artwork with the native session's stale cover or nil.
+            // Commands still require the reader's fresh command context.
+            if spotify != nil, let held = playback, held.commandContext != nil,
+               Date().timeIntervalSince(held.sampledAt) < NotchPlayback.gapGracePeriod {
+                return readingWithSpotify(held, native: reading)
+            }
+            return reading
+        }
         return readingWithSpotify(fresh, native: reading)
     }
 
@@ -293,7 +302,7 @@ final class NotchMusicService: ObservableObject {
             guard let self, self.spotify?.target == target, let native = self.nativeReading,
                   native.playback?.track.appPID == target.pid else { return }
             // Do not feed the authoritative reading back as native discovery.
-            let reading = fresh.map { self.readingWithSpotify($0, native: native) } ?? native
+            let reading = fresh.map { self.readingWithSpotify($0, native: native) } ?? self.spotifyReading(native)
             if fresh != nil { self.endPlaybackGap() }
             self.publishReading(reading)
             if fresh == nil { self.refreshAutomation() }
@@ -555,6 +564,18 @@ final class NotchMusicService: ObservableObject {
                 self.queueActionFailed = self.queueRequest != nil
             }
         })
+    }
+
+    var playbackControlsBusy: Bool {
+        commandPending || (spotify != nil && spotify?.playback == nil)
+    }
+
+    /// Layout follows the player's declared capability, not the transient
+    /// validity of the current recording. A stale slider remains disabled.
+    var showsSeekControl: Bool {
+        guard let playback, playback.hasPosition, playback.duration > 0 else { return false }
+        return playback.canSendCommandsDirectly ? playback.canSeek
+            : automationAvailability?.access == .granted && automationAvailability?.capabilities.position != nil
     }
 
     var canSeek: Bool {

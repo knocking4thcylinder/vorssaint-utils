@@ -101,6 +101,18 @@ enum NotchSpotifyPlaybackTests {
             suite.expect((read != nil) == (id == "spotify:track:A"),
                          "a track change between property reads rejects a mixed snapshot while stable input succeeds")
         }
+        let nativeReply: [String: Any] = ["kMRMediaRemoteNowPlayingInfoTitle": "New song", "pid": 42,
+                                            "displayID": "com.spotify.client", "artworkBase64": "AQID"]
+        let native = NotchPlayback.decode(try! JSONSerialization.data(withJSONObject: nativeReply))
+        suite.expect(native?.track.artworkData == nil,
+                     "Spotify's stale native artwork cannot be displayed with a new title")
+        var cache = NotchArtworkCache<String>()
+        cache.update("A", for: state.playback(pid: 42, revision: revision, artwork: Data([1])))
+        let nextRecord = fixture("spotify:track:B")
+        let nextSong = State.decode(track: nextRecord.0, application: nextRecord.1)!
+        cache.update(nil, for: nextSong.playback(pid: 42, revision: UUID(), artwork: nil))
+        suite.expect(cache.artwork == nil && cache.expiresAt == nil,
+                     "a verified Spotify cover never flashes on a different recording while its cover loads")
         suite.expect(State.coverURL("https://i.scdn.co/image/abc") != nil,
                      "Spotify's reported CDN image is accepted without a catalog search")
         for url in ["http://i.scdn.co/image/abc", "https://example.com/image/abc", "https://i.scdn.co.evil/image/abc",
@@ -179,6 +191,18 @@ enum NotchSpotifyPlaybackTests {
         Contract.NotchSpotifyCoverDownload.replies[3](Data([3])); Contract.DispatchQueue.main.drain()
         suite.expect(reader.playback == nil && received.last! == nil,
                      "a denied permission or failed read withdraws authority instead of retaining stale controls")
+        Reader.next = state("spotify:track:D")
+        reader.refresh(); land()
+        suite.expect(Contract.NotchSpotifyCoverDownload.replies.count == 4 && reader.playback?.track.artworkData == Data([3]),
+                     "a cover completing during a rejected snapshot is reused when the same recording recovers")
+        Reader.next = state("spotify:track:E")
+        reader.refresh(); land()
+        Reader.next = nil
+        reader.refresh(); land()
+        Reader.next = state("spotify:track:E")
+        reader.refresh(); land()
+        suite.expect(Contract.NotchSpotifyCoverDownload.replies.count == 5 && !Contract.NotchSpotifyCoverDownload.sessions[4].cancelled,
+                     "a transient read failure does not cancel and restart the same recording's cover download")
         let count = received.count
         reader.refresh(); reader.stop(); land()
         for work in Contract.DispatchQueue.main.later { work.perform() }

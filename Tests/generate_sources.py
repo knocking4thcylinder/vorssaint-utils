@@ -969,7 +969,7 @@ def main():
           + "var playback: NotchPlayback?\nlet receive: (NotchPlayback?) -> Void\nlet queue = Scheduler()\n"
           + "var stopped = false\nvar work: DispatchWorkItem?\nvar reading = false\nvar refreshWanted = false\n"
           + "var observer: NSObjectProtocol?\nvar state: State?\nvar sampledAt = Date()\nvar revision = UUID()\n"
-          + "var artwork: Data?\nvar coverRequest: UUID?\nvar session: URLSession?\n"
+          + "var artwork: Data?\nvar artworkURL: URL?\nvar coverRequest: UUID?\nvar session: URLSession?\n"
           + "var nextCoverAttemptAt: TimeInterval = 0\n"
           + "static var next: State?\nstatic func read(_ target: NotchMusicAutomation.Target) -> State? { next }\n"
           + "static func currentIdentifier(_ target: NotchMusicAutomation.Target) -> String? { next?.identifier }\n"
@@ -1037,6 +1037,8 @@ def main():
           + "var spotify: NotchSpotifyPlayback?\n"
           + "var validationRequests: [Command] = []\nfunc send(_ command: Command) -> Bool { validationRequests.append(command); return true }\n"
           + declaration(music, "    private struct AutomationAction {").replace("private struct", "struct", 1)
+          + declaration(music, "    var playbackControlsBusy:")
+          + declaration(music, "    var showsSeekControl:")
           + declaration(music, "    var canSeek:")
           + declaration(music, "    func canPerform(")
           + declaration(music, "    func lacksTrackSkipping(")

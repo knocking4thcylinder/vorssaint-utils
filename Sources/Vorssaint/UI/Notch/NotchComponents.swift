@@ -10,6 +10,7 @@ import SwiftUI
 struct NotchButtonStyle: ButtonStyle {
     var cornerRadius: CGFloat = 10
     var lifts = true
+    var dimsWhenDisabled = true
     @State private var hovered = false
     @Environment(\.isEnabled) private var enabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -22,7 +23,7 @@ struct NotchButtonStyle: ButtonStyle {
                     .fill(.white.opacity(active ? 0.09 : 0))
                     .allowsHitTesting(false)
             }
-            .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
+            .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : (dimsWhenDisabled ? 0.4 : 1))
             .scaleEffect(reduceMotion || !lifts ? 1
                          : configuration.isPressed ? 0.965 : (active ? 1.022 : 1))
             .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.7),

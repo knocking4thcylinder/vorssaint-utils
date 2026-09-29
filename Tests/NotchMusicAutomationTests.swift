@@ -167,12 +167,24 @@ enum NotchMusicAutomationTests {
                                                capabilities: capabilities, access: .granted)
         suite.expect(!service.canPerform(.next) && !service.canSeek,
                      "Spotify cannot act on native metadata before its authoritative reader supplies a recording")
+        suite.expect(service.showsSeekControl,
+                     "a transient Spotify validation gap retains the timeline layout while seeking is disabled")
         service.playback?.commandContext = nil
-        suite.expect(!service.canSeek, "missing Spotify command context cannot expose a seek slider")
+        suite.expect(!service.canSeek && service.showsSeekControl,
+                     "missing Spotify command context disables interaction without replacing the slider")
         service.playback = current
         let reader = Context.NotchSpotifyPlayback()
         reader.playback = current
         service.spotify = reader
+        reader.playback = nil
+        suite.expect(service.playbackControlsBusy && service.showsSeekControl && !service.canPerform(.next) && !service.canSeek,
+                     "refreshing Spotify retains the control presentation but cannot send commands or seek")
+        reader.playback = current
+        service.commandPending = true
+        suite.expect(service.playbackControlsBusy && !service.canPerform(.next),
+                     "a pending skip preserves button appearance without admitting a duplicate command")
+        service.commandPending = false
+        suite.expect(!service.playbackControlsBusy, "a fresh idle reader ends the temporary busy appearance")
         suite.expect(service.beginAutomation(.next, playback: current) && service.validationRequests.isEmpty,
                      "Spotify commands validate against the selected Spotify recording rather than stale MediaRemote metadata")
         service.queue.drain(); Context.DispatchQueue.main.drain()

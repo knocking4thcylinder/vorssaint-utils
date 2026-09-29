@@ -74,6 +74,7 @@ final class NotchSpotifyPlayback {
     private var sampledAt = Date()
     private var revision = UUID()
     private var artwork: Data?
+    private var artworkURL: URL?
     private var coverRequest: UUID?
     private var session: URLSession?
     private var nextCoverAttemptAt: TimeInterval = 0
@@ -117,7 +118,7 @@ final class NotchSpotifyPlayback {
                 } else {
                     let work = DispatchWorkItem { [weak self] in self?.refresh() }
                     self.work = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + (next == nil ? 0.25 : 1), execute: work)
                 }
             }
         }
@@ -143,17 +144,16 @@ final class NotchSpotifyPlayback {
             // old recording. Keep native discovery, but withdraw this authority.
             playback = nil
             state = nil
-            session?.invalidateAndCancel(); session = nil
-            coverRequest = nil
-            artwork = nil
-            nextCoverAttemptAt = 0
+            // Withdraw commands, but let the bounded cover request finish.
+            // A mixed read during a track transition is not a cover change.
             receive(nil)
             return
         }
         if state?.identifier != next.identifier {
             revision = UUID()
         }
-        if state?.artworkURL != next.artworkURL {
+        if artworkURL != next.artworkURL {
+            artworkURL = next.artworkURL
             artwork = nil
             session?.invalidateAndCancel(); session = nil
             coverRequest = nil
@@ -172,7 +172,7 @@ final class NotchSpotifyPlayback {
             session = NotchSpotifyCoverDownload.load(url) { [weak self] data in
                 DispatchQueue.main.async {
                     guard let self, !self.stopped, self.coverRequest == request,
-                          self.state?.artworkURL == url else { return }
+                          self.artworkURL == url else { return }
                     self.session = nil
                     self.artwork = data
                     self.publish()
