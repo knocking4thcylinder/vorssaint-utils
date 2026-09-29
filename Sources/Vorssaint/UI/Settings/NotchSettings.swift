@@ -186,10 +186,11 @@ struct NotchSettings: View {
                     Text(text.sizeHint).font(.caption).foregroundStyle(.secondary)
                 }
                 // Liquid Glass takes the open island's background when it is
-                // on, so the switch would change nothing then.
+                // on and is already see-through, so the switch reads on and
+                // changes nothing then.
                 switchRow("drop.halffull", text.translucentBackground,
                           caption: liquidGlassIsOn ? text.translucentBackgroundGlassHint : text.translucentBackgroundHint,
-                          isOn: $translucentBackground)
+                          isOn: liquidGlassIsOn ? .constant(true) : $translucentBackground)
                     .disabled(liquidGlassIsOn)
             }
             // Only a display without a camera can float the island.
