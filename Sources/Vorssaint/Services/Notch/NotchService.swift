@@ -138,6 +138,7 @@ final class NotchService: ObservableObject {
     private var captureFallback: (() -> Void)?
     private var captureClose: (() -> Void)?
     private var captureHover: ((Bool) -> Void)?
+    private var captureClosesOnCollapse = false
     private var inside = false
     private var hoverEmphasized = false
     private var activitySelection = NotchActivitySelection()
@@ -538,16 +539,28 @@ final class NotchService: ObservableObject {
     /// The island around a previewed section, whose title sits beside the
     /// camera only where the island's would.
     func previewGeometry(for module: NotchModule) -> NotchGeometry {
+        previewGeometry(for: module, sectionsButton: previewShowsSectionsButton)
+    }
+
+    private func previewGeometry(for module: NotchModule, sectionsButton: Bool) -> NotchGeometry {
         var result = geometry
-        result.headerTitleWidth = NotchLayout.headerTitleWidth(module.title(L10n.shared.language), button: headerShowsSectionsButton)
+        result.headerTitleWidth = NotchLayout.headerTitleWidth(module.title(L10n.shared.language), button: sectionsButton)
         return result
+    }
+
+    /// Settings previews the island while it is off too, when the floating
+    /// buttons are not read for it, so a preview reads them as it draws.
+    private var previewShowsSectionsButton: Bool {
+        !NotchQuickAccessConfiguration.current().actions.contains(.explore)
     }
 
     /// The tallest island a preview can show: a page that fills the budget,
     /// below the row the widest title may need.
     var previewLargestSize: CGSize {
+        let sectionsButton = previewShowsSectionsButton
         var tallest = geometry
-        tallest.headerTitleWidth = NotchModule.allCases.map { previewGeometry(for: $0).headerTitleWidth }.max() ?? 0
+        tallest.headerTitleWidth = NotchModule.allCases
+            .map { previewGeometry(for: $0, sectionsButton: sectionsButton).headerTitleWidth }.max() ?? 0
         return tallest.expandedSize(module: .calendar)
     }
 
@@ -1041,6 +1054,7 @@ final class NotchService: ObservableObject {
 
     func collapse() {
         guard captureControls == nil, !heldDrag else { return }
+        let closeCapture = detachCaptureIfClosingOnCollapse()
         hoverState.close(pointerInside: windowHost?.containsHover(NSEvent.mouseLocation) == true)
         pinned = false
         hoverWork?.cancel(); hoverWork = nil
@@ -1061,6 +1075,7 @@ final class NotchService: ObservableObject {
         panel?.resignKey()
         removeEventMonitors()
         syncVisibleConsumers()
+        closeCapture?()
     }
 
     func toggle() { expanded ? collapse() : open() }
@@ -1507,6 +1522,7 @@ final class NotchService: ObservableObject {
 
     func presentCaptureControls(_ options: ScreenCaptureSelectionOptions, cancel: @escaping () -> Void) {
         guard acceptsSystemFeedback else { cancel(); return }
+        let closeCapture = detachCaptureIfClosingOnCollapse()
         pinned = false
         captureControlsCancel = cancel
         captureControls = options
@@ -1542,6 +1558,7 @@ final class NotchService: ObservableObject {
         panel?.makeKey()
         installCaptureControlsClickThrough()
         syncVisibleConsumers()
+        closeCapture?()
     }
 
     func collapseCaptureControls() {
@@ -1938,7 +1955,8 @@ final class NotchService: ObservableObject {
         !expanded && !dragPlaceholder && captureControls == nil
     }
 
-    func presentCapture(id: UUID, content: AnyView, actions: AnyView? = nil, height: CGFloat, fallback: @escaping () -> Void,
+    func presentCapture(id: UUID, content: AnyView, actions: AnyView? = nil, height: CGFloat,
+                        takeFocus: Bool, closeOnCollapse: Bool, fallback: @escaping () -> Void,
                         close: @escaping () -> Void, hover: @escaping (Bool) -> Void) -> Bool {
         guard acceptsSystemFeedback, NotchSupport.routes(.capture) else { return false }
         let keepOpen = expanded && pinned
@@ -1949,8 +1967,9 @@ final class NotchService: ObservableObject {
         captureFallback = fallback
         captureClose = close
         captureHover = hover
+        captureClosesOnCollapse = closeOnCollapse
         open(.captures, pinned: keepOpen,
-             takeFocus: UserDefaults.standard.bool(forKey: DefaultsKey.screenshotPreviewTakesFocus), feedback: false)
+             takeFocus: takeFocus, feedback: false)
         captureHover?(inside)
         return true
     }
@@ -1985,6 +2004,17 @@ final class NotchService: ObservableObject {
         captureFallback = nil
         captureClose = nil
         captureHover = nil
+        captureClosesOnCollapse = false
+    }
+
+    /// Persistent captures must detach before their close callback runs so a
+    /// replaced island surface cannot be collapsed again by that callback.
+    /// Timed captures remain attached to their existing dismissal timer.
+    private func detachCaptureIfClosingOnCollapse() -> (() -> Void)? {
+        guard captureClosesOnCollapse else { return nil }
+        let close = captureClose
+        clearCapture()
+        return close
     }
 
     private func mutatePresentation(transitionContent: NotchContentTransition = .none, _ change: () -> Void) {
